@@ -1,0 +1,255 @@
+<?php
+
+/**
+ * @file
+ * Module to control the display of the hypothesis on the site.
+ */
+
+/**
+ * Shows hypothesis on every page except the listed pages.
+ */
+define('HYPOTHESIS_VISIBILITY_NOTLISTED', 0);
+
+/**
+ * Shows hypothesis on only the listed pages.
+ */
+define('HYPOTHESIS_VISIBILITY_LISTED', 1);
+
+/**
+ * Implements hook_page_build().
+ */
+function hypothesis_page_build() {
+
+  if (path_is_admin(current_path()) || !_hypothesis_check_visibility()) {
+    return;
+  }
+
+  $default_settings = array(
+    'showHighlights' => (bool) variable_get('hypothesis_highlights_on', '0'),
+    'sidebarOpen' => (bool) variable_get('hypothesis_sidebar_open', '0'),
+  );
+  drupal_add_js(array('hypothesis' => $default_settings), 'setting');
+  drupal_add_js(drupal_get_path('module', 'hypothesis') . '/js/showdefaults.js');
+  if (user_access('load hypothesis')) {
+    global $is_https;
+    $protocol = $is_https ? 'https' : 'http';
+    drupal_add_js($protocol . '://hypothes.is/embed.js', 'external');
+  }
+
+}
+
+/**
+ * Implements hook_permission().
+ */
+function hypothesis_permission() {
+  return array(
+    'load hypothesis' => array(
+      'title' => t('Load Hypothesis'),
+      'description' => t('Load the Hypothesis JavaScript to non-admin pages.'),
+    ),
+  );
+}
+
+/**
+ * Hypothesis settings form.
+ */
+function hypothesis_admin_settings_form($form, &$form_state) {
+  $form['defaults'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Defaults Settings'),
+    '#description' => t('Customize Hypothesis defaults and behavior below:'),
+  );
+
+  $form['defaults']['hypothesis_highlights_on'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Highlights on by default'),
+    '#default_value' => variable_get('hypothesis_highlights_on', '0'),
+  );
+  $form['defaults']['hypothesis_sidebar_open'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Sidebar open by default'),
+    '#default_value' => variable_get('hypothesis_sidebar_open', '0'),
+  );
+
+  // Visibility settings.
+  $form['visibility_title'] = array(
+    '#type' => 'item',
+    '#title' => t('Visibility settings'),
+  );
+  $form['visibility'] = array(
+    '#type' => 'vertical_tabs',
+    '#attached' => array(
+      'js' => array(drupal_get_path('module', 'hypothesis') . '/js/hypothesis.js'),
+    ),
+  );
+
+  // Per-path visibility.
+  $form['visibility']['path'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Pages'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+    '#group' => 'visibility',
+    '#weight' => 0,
+  );
+
+  $options = array(
+    HYPOTHESIS_VISIBILITY_NOTLISTED => t('All pages except those listed'),
+    HYPOTHESIS_VISIBILITY_LISTED => t('Only the listed pages'),
+  );
+  $args = array(
+    '%blog' => 'blog',
+    '%blog-wildcard' => 'blog/*',
+    '%front' => '<front>',
+  );
+  $description = t("Specify pages by using their paths. Enter one path per line. The '*' character is a wildcard. Example paths are %blog for the blog page and %blog-wildcard for every personal blog. %front is the front page.", $args);
+  $title = t('Pages');
+  $hypothesis_visibility = variable_get('hypothesis_visibility', '0');
+
+  $form['visibility']['path']['hypothesis_visibility'] = array(
+    '#type' => 'radios',
+    '#title' => t('Show hypothesis on specific pages'),
+    '#options' => $options,
+    '#default_value' => isset($hypothesis_visibility) ? $hypothesis_visibility : HYPOTHESIS_VISIBILITY_NOTLISTED,
+  );
+
+  $hypothesis_pages = variable_get('hypothesis_pages', '0');
+  $form['visibility']['path']['hypothesis_pages'] = array(
+    '#type' => 'textarea',
+    '#title' => '<span class="element-invisible">' . $title . '</span>',
+    '#default_value' => $hypothesis_pages ? $hypothesis_pages : '',
+    '#description' => $description,
+  );
+
+  $default_type_options = variable_get('hypothesis_types', '0');
+  $form['visibility']['node_type'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Content types'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+    '#group' => 'visibility',
+    '#weight' => 5,
+  );
+  $form['visibility']['node_type']['hypothesis_types'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Show hypothesis for specific content types'),
+    '#default_value' => $default_type_options ? $default_type_options : array(),
+    '#options' => node_type_get_names(),
+    '#description' => t('Show hypothesis only on pages that display content of the given type(s). If you select no types, there will be no type-specific limitation.'),
+  );
+
+  $default_role_options = variable_get('hypothesis_roles', '0');
+  $role_options = array_map('check_plain', user_roles());
+  $form['visibility']['role'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Roles'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+    '#group' => 'visibility',
+    '#weight' => 10,
+  );
+  $form['visibility']['role']['hypothesis_roles'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Show hypothesis for specific roles'),
+    '#default_value' => $default_role_options ? $default_role_options : array(),
+    '#options' => $role_options,
+    '#description' => t('Show hypothesis only for the selected role(s). If you select no roles, hypothesis will be visible to all users.'),
+  );
+
+  return system_settings_form($form);
+}
+
+/**
+ * Implements hook_menu().
+ */
+function hypothesis_menu() {
+
+  $items['admin/config/user-interface/hypothesis'] = array(
+    'title' => 'Hypothesis',
+    'description' => 'Description of your Hypothesis settings page',
+    'description' => 'Configure Hypothesis defaults and behavior.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('hypothesis_admin_settings_form'),
+    'access arguments' => array('administer hypothesis settings'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_help().
+ */
+function hypothesis_help($path, $arg) {
+  return '';
+}
+
+/**
+ * Checks the page, user role, and user-specific visibility settings.
+ */
+function _hypothesis_check_visibility() {
+  global $user;
+
+  // If there are no roles associated, it is hypothesis is displayed for every
+  // role. If none of the user's roles matches the hypothesis role settings, it
+  // wont show.
+  $roles = array_filter(variable_get('hypothesis_roles', array()));
+  if (!empty($roles) && !array_intersect($roles, array_keys($user->roles))) {
+    // No match.
+    return FALSE;
+  }
+
+  // Check which pages hypothesis should display on.
+  $visibility = variable_get('hypothesis_visibility', '0');
+  $pages = variable_get('hypothesis_pages', '0');
+  // Limited visibility must list at least one page.
+  if ($visibility == HYPOTHESIS_VISIBILITY_LISTED && empty($pages)) {
+    return FALSE;
+  }
+  // Match path if necessary.
+  if ($pages) {
+    // Convert path to lowercase. This allows comparison of the same path
+    // with different case. Ex: /Page, /page, /PAGE.
+    $pages = drupal_strtolower($pages);
+    // Convert the Drupal path to lowercase.
+    $path = drupal_strtolower(drupal_get_path_alias($_GET['q']));
+    // Compare the lowercase internal and lowercase path alias (if any).
+    $page_match = drupal_match_path($path, $pages);
+    if ($path != $_GET['q']) {
+      $page_match = $page_match || drupal_match_path($_GET['q'], $pages);
+    }
+    // When $visibility has a value of 0 (HYPOTHESIS_VISIBILITY_NOTLISTED),
+    // hypothesis is displayed on all pages except those listed in $pages.
+    // When set to 1 (HYPOTHESIS_VISIBILITY_LISTED), it is displayed only on
+    // those pages listed in $pages.
+    $page_match = !($visibility xor $page_match);
+  }
+  else {
+    $page_match = TRUE;
+  }
+  if (!$page_match) {
+    return FALSE;
+  }
+
+  // Check which content types hypothesis should display on.
+  $types = array_filter(variable_get('hypothesis_types', array()));
+  if (!empty($types)) {
+
+    $node = menu_get_object();
+
+    if (!empty($node)) {
+      // This is a node or node edit page.
+      if (empty($types[$node->type])) {
+        // Hypothesis should not be displayed for this node type.
+        return FALSE;
+      }
+    }
+    else {
+      // This is not a node page, dont display hypothesis.
+      return FALSE;
+    }
+  }
+
+  return TRUE;
+
+}
